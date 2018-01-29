@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
 	char image_names[100][200]; // array of images. Will load from file system eventually
 	int num_images = 0;
 	int i = 1;
-	int test_flag = 0, screen_persist = 0;
+	int test_flag = 0, screen_persist = 0, kill_x = 0, trig_in = 0;
 	DIR *d;
 	struct dirent *dir;
 
@@ -25,6 +25,7 @@ int main(int argc, char** argv) {
 		printf("Options:\n");
 		printf(" -test (-t)     run through built in test patterns\n");
 		printf(" -persist (-p)  the last pattern will stay on the screen at the end of the sequence\n");
+		printf(" -kill (-k)     stop running the X-server (sometimes gets better results). Restarts afterwards\n");
 		return EXIT_FAILURE;
 	}
 	
@@ -37,6 +38,16 @@ int main(int argc, char** argv) {
 			screen_persist = 1;
 		}
 
+		if ((strcmp("-k",argv[i]) == 0) || (strcmp("-kill",argv[i]) == 0)) {
+			kill_x = 1;
+			printf("Closing X server...\n");
+			system("sudo service lightdm stop");
+			usleep(1000000); // let X server close
+		}
+
+		if ((strcmp("-i",argv[i]) == 0) || (strcmp("-in",argv[i]) == 0)) {
+			trig_in = 1;
+		}
 		i++; // increment to check additional flags
 	}
 
@@ -80,16 +91,21 @@ int main(int argc, char** argv) {
 
 	// Display images
 	if(test_flag) {
-		test_loop(fbp, buffer, &var_info, &fix_info, delay, repeat, screensize);
+		test_loop(fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, trig_in);
 	}
 	else {
 		i = 0;
 		d = opendir(".");
 		if (d) {
 			dir = readdir(d);
+			if (DEBUG) {
+				printf("Images to display:\n");
+			}
 			while (dir != NULL) {
 				if (strstr(dir->d_name,".bmp") != NULL) {
-					printf("%s\n", dir->d_name);
+					if (DEBUG) {
+						printf(" %s\n", dir->d_name);
+					}
 					strcpy(image_names[num_images], dir->d_name);
 					num_images++;
 				}
@@ -100,12 +116,12 @@ int main(int argc, char** argv) {
 		//image_names[0] = "test_image.bmp";
 		//image_names[0] = "binary_image1.bmp"; // array of images
 		//image_names[1] = "binary_image2.bmp"; // array of images
-		display_images(image_names, num_images, fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, screen_persist);
+		display_images(image_names, num_images, fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, screen_persist, trig_in);
 	}
 	
 
 
-	if (cleanup(fb, fbp, buffer, screensize) == EXIT_FAILURE){
+	if (cleanup(fb, fbp, buffer, screensize, kill_x) == EXIT_FAILURE){
 		printf("Error cleaning up files\n");
 		return EXIT_FAILURE;
 	}
@@ -114,14 +130,14 @@ int main(int argc, char** argv) {
 }
 
 
-int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize, int screen_persist) {
+int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize, int screen_persist, int trig_in) {
 	int i, ii;
 	long x, y, location;
 	long x_max = var_info->xres_virtual;
 	long y_max = var_info->yres_virtual;
 	uint32_t pix = 0x123456;// Pixel to draw
 	pixel** img;
-	struct timeval start, stop;
+	struct timeval start, stop, start2, stop2;
 	int usecs = 0;
 	double totalusecs = 0;
 	
@@ -151,11 +167,10 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 					*((uint32_t*)(bbp + location)) = pix; // write pixel to buffer	
 				}
 			}
-
 			//printf("Iteration %i, displaying image %s\n", ii, image_names[i]);
 			
 			// Wait until delay is over
-			if (!(ii == 0 && i == 0)) { // as long as it's not the first time through the loop we have to wait
+			if (!(ii == 0 && i == 0) && !trig_in) { // as long as it's not the first time through the loop we have to wait
 				do {
 					usleep(10);
 					gettimeofday(&stop, NULL);
@@ -169,21 +184,38 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 					totalusecs+=usecs;
 				}
 			}
+			else if (trig_in) { // if we are using trigger in
+				int next = 0;
+				while (!next) {
+					printf("1 to continue: ");
+					scanf("%i",&next);
+				}		
+				printf("\n");
+			}
+			
+
+			// Freeze update buffer
+			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x01 i");
 
 			// Display image
 			memcpy(fbp, bbp, screensize); // load framebuffer from buffered location
 
 			// Start timer that will be used for next image
 			gettimeofday(&start, NULL);
+
+			usleep(delay/3); // allow buffer to finish loading
+			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer
 		}
 	}
 
 	// Wait for last image to be done
-	do {
-		usleep(10);
-		gettimeofday(&stop, NULL);
-		usecs = (stop.tv_usec - start.tv_usec) + (stop.tv_sec - start.tv_sec)*1000000;
-	} while (usecs < (delay-EXTRA_TIME)); // -EXTRA_TIME which is approximate buffer load time 
+	if (!trig_in) {
+		do {
+			usleep(10);
+			gettimeofday(&stop, NULL);
+			usecs = (stop.tv_usec - start.tv_usec) + (stop.tv_sec - start.tv_sec)*1000000;
+		} while (usecs < (delay-EXTRA_TIME)); // -EXTRA_TIME which is approximate buffer load time 
+	}
 	
 	if (DEBUG_TIME) {
 		printf("Delay goal is %ius versus actual of %ius. Difference: %.1fms\n",delay,usecs,(usecs-delay)/1000.0);
@@ -198,14 +230,23 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	free(img);
 
 
-	if (!screen_persist) {
+	if (!screen_persist && !trig_in) {
+		clear_screen(fbp, bbp, var_info, fix_info, screensize);
+	}
+	else if (!screen_persist && trig_in) { // wait until last trigger in to clear screen otherwise
+		int next = 0;
+		while (!next) {
+			printf("1 to continue: ");
+			scanf("%i",&next);
+		}		
+		printf("\n");
 		clear_screen(fbp, bbp, var_info, fix_info, screensize);
 	}
 
 	return EXIT_SUCCESS;
 }
 
-int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize) {
+int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize, int trig_in) {
 	int i, ii;
 	long x, y, location;
 	long x_max = var_info->xres_virtual;
@@ -248,7 +289,7 @@ int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, st
 		}
 		
 		// Wait until delay is over
-		if (!(ii == 0 && i == 0)) { // as long as it's not the first time through the loop we have to wait
+		if (!(ii == 0 && i == 0) && !trig_in) { // as long as it's not the first time through the loop we have to wait
 			do {
 				usleep(10);
 				gettimeofday(&stop, NULL);
@@ -263,12 +304,29 @@ int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, st
 				total_displayed++;
 			}
 		}
+		else if (trig_in) { // if we are using trigger in
+			
+			int next = 0;
+			while (!next) {
+				printf("1 to continue: ");
+				scanf("%i",&next);
+			}		
+			printf("\n");
+		}
+
+		// Freeze update buffer
+		system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x01 i");
 
 		// Display image
 		memcpy(fbp, bbp, screensize); // load framebuffer from buffered location
-
+		
 		// Start timer that will be used for next image
 		gettimeofday(&start, NULL);
+		
+		usleep(delay/3); // allow buffer to finish loading
+		system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer
+
+		
 		}
 	}
 
@@ -316,7 +374,7 @@ int clear_screen(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info,
 
 
 // Releases appropriate files
-int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize) {
+int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int kill_x) {
 	
 	if (munmap(fbp, screensize) == EXIT_FAILURE) {
 		printf("Unable to unmap fbp\n");
@@ -326,6 +384,9 @@ int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize) {
 	}
 	if (close(fb) == EXIT_FAILURE) {
 		printf("Unable to close frame buffer\n");
+	}
+	if (kill_x == 1) { // should restart x server
+		system("sudo service lightdm start");
 	}
 	return EXIT_SUCCESS;
 }
