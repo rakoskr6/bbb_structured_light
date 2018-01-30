@@ -1,5 +1,5 @@
-#include "write_to_fb.h"
-#include "open_png.h"
+#include "display_app.h"
+#include "open_bmp.h"
 #define PRINTBMPINFO 0
 #define PRINTBMPDATA 0
 
