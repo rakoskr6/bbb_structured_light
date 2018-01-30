@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
 	char image_names[100][200]; // array of images. Will load from file system eventually
 	int num_images = 0;
 	int i = 1;
-	int test_flag = 0, screen_persist = 0, kill_x = 0, trig_in = 0;
+	int test_flag = 0, screen_persist = 0, kill_x = 0, trig_in = 0, video_mode = 0;
 	DIR *d;
 	struct dirent *dir;
 
@@ -24,8 +24,10 @@ int main(int argc, char** argv) {
 		printf("Usage: pattern_disp [options] framerate repetitions\n\n");
 		printf("Options:\n");
 		printf(" -test (-t)     run through built in test patterns\n");
+		printf(" -in (-i)       use the trigger in (default GPIO_115) to advance to next pattern instead of set framerate\n");
 		printf(" -persist (-p)  the last pattern will stay on the screen at the end of the sequence\n");
 		printf(" -kill (-k)     stop running the X-server (sometimes gets better results). Restarts afterwards\n");
+		printf(" -video (-v)    don't modify the EVM display and keep the display in video mode\n");
 		return EXIT_FAILURE;
 	}
 	
@@ -48,6 +50,10 @@ int main(int argc, char** argv) {
 		if ((strcmp("-i",argv[i]) == 0) || (strcmp("-in",argv[i]) == 0)) {
 			trig_in = 1;
 		}
+
+		if ((strcmp("-v",argv[i]) == 0) || (strcmp("-video",argv[i]) == 0)) {
+			video_mode = 1;
+		}
 		i++; // increment to check additional flags
 	}
 
@@ -63,9 +69,7 @@ int main(int argc, char** argv) {
 	// Get screen infromation and ensure it is properly setup
 	ioctl(fb, FBIOGET_FSCREENINFO, &fix_info); //Get the fixed screen information
 	ioctl(fb, FBIOGET_VSCREENINFO, &var_info); // Get the variable screen information
-	//if(ioctl(fb, KDSETMODE, KD_GRAPHICS) == -1) {
-	//	printf("Failed to set graphics mode on fb\n"); // to be verified
-	//}
+
 
 	// Ensure certain parameters are properly setup (they already should be)
 	var_info.grayscale = 0;
@@ -77,9 +81,15 @@ int main(int argc, char** argv) {
 	}
 
 
+	// Change some video settings for better "pixel accurate" mode
+	if (!video_mode) {
+		system("i2cset -y 2 0x1b 0x7e 0x00 0x00 0x00 0x02 i"); // disable temporal dithering
+		system("i2cset -y 2 0x1b 0x50 0x00 0x00 0x00 0x06 i"); // disable automatic gain control
+		system("i2cset -y 2 0x1b 0x5e 0x00 0x00 0x00 0x00 i"); // disable color coordinate adjustment (CCA) function
+	}
+
 	// Setup mmaped buffers
 	long screensize = var_info.yres_virtual * fix_info.line_length; // Determine total size of screen in bytes
-	
 	uint8_t* fbp = mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fb, (off_t)0); // Map screenbuffer to memory with read and write access and visible to other processes
 	uint8_t* buffer = mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, (off_t)0); // Second buffer 
 
@@ -94,7 +104,6 @@ int main(int argc, char** argv) {
 		test_loop(fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, trig_in);
 	}
 	else {
-		i = 0;
 		d = opendir(".");
 		if (d) {
 			dir = readdir(d);
@@ -113,15 +122,13 @@ int main(int argc, char** argv) {
 			}
 			closedir(d);
 		}
-		//image_names[0] = "test_image.bmp";
-		//image_names[0] = "binary_image1.bmp"; // array of images
-		//image_names[1] = "binary_image2.bmp"; // array of images
+
 		display_images(image_names, num_images, fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, screen_persist, trig_in);
 	}
 	
 
 
-	if (cleanup(fb, fbp, buffer, screensize, kill_x) == EXIT_FAILURE){
+	if (cleanup(fb, fbp, buffer, screensize, kill_x, video_mode) == EXIT_FAILURE){
 		printf("Error cleaning up files\n");
 		return EXIT_FAILURE;
 	}
@@ -151,23 +158,22 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	// Will loop through displaying all images
 	for (ii = 0; ii < repeat; ii++) {
 		for (i = 0; i < num_images; i++) {
-			// Open image and ensure it's successful 
+			// Open image and ensure it's successful. Inefficent to load file everytime but fine at low framerates
 			if (open_png(image_names[i], img) == EXIT_FAILURE) {
 				return EXIT_FAILURE;
 			}
-			//printf("Image %s\n",image_names[i]);
+			system("echo 0 > /sys/class/gpio/gpio49/value"); // set trigger low since we have completed the trigger
+
 
 
 			// Transfer image structure to the buffer
 			for (y=0; y<y_max; y++) {
-				//printf("y: %i ",y);
 				for (x=0; x<x_max; x++) {
 					location = (x+var_info->xoffset) * (var_info->bits_per_pixel / 8) + (y + var_info->yoffset) * fix_info->line_length; // offset where we write pixel value
 					pix = pixel_color(img[y][x].r, img[y][x].g, img[y][x].b, var_info); // get pixel in correct format
 					*((uint32_t*)(bbp + location)) = pix; // write pixel to buffer	
 				}
 			}
-			//printf("Iteration %i, displaying image %s\n", ii, image_names[i]);
 			
 			// Wait until delay is over
 			if (!(ii == 0 && i == 0) && !trig_in) { // as long as it's not the first time through the loop we have to wait
@@ -205,6 +211,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 
 			usleep(delay/3); // allow buffer to finish loading
 			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer
+			system("echo 1 > /sys/class/gpio/gpio49/value"); // set trigger high to indicate image done loading
 		}
 	}
 
@@ -229,6 +236,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	}
 	free(img);
 
+	system("echo 0 > /sys/class/gpio/gpio49/value"); // set trigger low since we have completed the trigger
 
 	if (!screen_persist && !trig_in) {
 		clear_screen(fbp, bbp, var_info, fix_info, screensize);
@@ -374,7 +382,7 @@ int clear_screen(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info,
 
 
 // Releases appropriate files
-int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int kill_x) {
+int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int kill_x, int video_mode) {
 	
 	if (munmap(fbp, screensize) == EXIT_FAILURE) {
 		printf("Unable to unmap fbp\n");
@@ -387,6 +395,11 @@ int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int kill_x) 
 	}
 	if (kill_x == 1) { // should restart x server
 		system("sudo service lightdm start");
+	}
+	if (!video_mode) { // reset to video mode
+		system("i2cset -y 2 0x1b 0x7e 0x00 0x00 0x00 0x00 i"); // enable temporal dithering
+		system("i2cset -y 2 0x1b 0x50 0x00 0x00 0x00 0x07 i"); // enable automatic gain control
+		system("i2cset -y 2 0x1b 0x5e 0x00 0x00 0x00 0x01 i"); // enable color coordinate adjustment (CCA) function
 	}
 	return EXIT_SUCCESS;
 }
