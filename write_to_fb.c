@@ -1,9 +1,7 @@
 #include "write_to_fb.h"
 #include "open_png.h"
 
-#define DEBUG 0
-#define DEBUG_TIME 0
-#define EXTRA_TIME 3500
+
 
 int main(int argc, char** argv) {
 	// Variable declarations
@@ -24,13 +22,17 @@ int main(int argc, char** argv) {
 		printf("Usage: pattern_disp [options] framerate repetitions\n\n");
 		printf("Options:\n");
 		printf(" -test (-t)     run through built in test patterns\n");
-		printf(" -in (-i)       use the trigger in (default GPIO_115) to advance to next pattern instead of set framerate\n");
+		printf(" -in (-i)       use the trigger in (GPIO"GPIO_IN") to advance to next pattern instead of set framerate\n");
 		printf(" -persist (-p)  the last pattern will stay on the screen at the end of the sequence\n");
 		printf(" -kill (-k)     stop running the X-server (sometimes gets better results). Restarts afterwards\n");
 		printf(" -video (-v)    don't modify the EVM display and keep the display in video mode\n");
 		return EXIT_FAILURE;
 	}
 	
+	// Setup EVM for output from Beagle
+	system("i2cset -y 2 0x1b 0x0b 0x00 0x00 0x00 0x00 i");
+	system("i2cset -y 2 0x1b 0x0c 0x00 0x00 0x00 0x1b i");
+
 	while (i < argc && argv[i][0] == '-') { // while there are flags to handle
 		if ((strcmp("-t",argv[i]) == 0) || (strcmp("-test",argv[i]) == 0)) {
 			test_flag = 1;
@@ -98,6 +100,7 @@ int main(int argc, char** argv) {
 		return EXIT_FAILURE;
 	} 
 
+	setupGPIO(); // setup input and output triggers
 
 	// Display images
 	if(test_flag) {
@@ -147,7 +150,13 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	struct timeval start, stop, start2, stop2;
 	int usecs = 0;
 	double totalusecs = 0;
+	FILE *fp_trig_in; 
+	char trig_in_value = '0';
 	
+	if (trig_in) { // if there is a trigger in delay should coorspond to a relativly high framerate (~50fps works)
+		delay = 20000;
+	}
+
 	// Allocate image structure which will be used to load images
 	img = (pixel**)malloc(IMG_Y * sizeof(pixel*));
 	for (i = 0; i < IMG_Y; i++) {
@@ -162,8 +171,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 			if (open_png(image_names[i], img) == EXIT_FAILURE) {
 				return EXIT_FAILURE;
 			}
-			system("echo 0 > /sys/class/gpio/gpio49/value"); // set trigger low since we have completed the trigger
-
+			system("echo 0 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger outpu low since we have completed the trigger
 
 
 			// Transfer image structure to the buffer
@@ -191,12 +199,13 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 				}
 			}
 			else if (trig_in) { // if we are using trigger in
-				int next = 0;
-				while (!next) {
-					printf("1 to continue: ");
-					scanf("%i",&next);
-				}		
-				printf("\n");
+					while (trig_in_value == '0') { // wait until trigger in is asserted
+						fp_trig_in = fopen("/sys/class/gpio/gpio"GPIO_IN"/value","r");
+						trig_in_value = fgetc(fp_trig_in);
+						fclose(fp_trig_in);
+						usleep(1000);
+					}
+					trig_in_value = '0';
 			}
 			
 
@@ -211,7 +220,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 
 			usleep(delay/3); // allow buffer to finish loading
 			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer
-			system("echo 1 > /sys/class/gpio/gpio49/value"); // set trigger high to indicate image done loading
+			system("echo 1 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger high to indicate image done loading
 		}
 	}
 
@@ -224,7 +233,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 		} while (usecs < (delay-EXTRA_TIME)); // -EXTRA_TIME which is approximate buffer load time 
 	}
 	
-	if (DEBUG_TIME) {
+	if (DEBUG_TIME && !trig_in) {
 		printf("Delay goal is %ius versus actual of %ius. Difference: %.1fms\n",delay,usecs,(usecs-delay)/1000.0);
 		totalusecs+=usecs;
 		printf("Average difference: %.1fms\n\n", (delay-totalusecs/repeat/num_images)/1000.0);
@@ -236,221 +245,21 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	}
 	free(img);
 
-	system("echo 0 > /sys/class/gpio/gpio49/value"); // set trigger low since we have completed the trigger
+	system("echo 0 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger low since we have completed the trigger
 
 	if (!screen_persist && !trig_in) {
 		clear_screen(fbp, bbp, var_info, fix_info, screensize);
 	}
 	else if (!screen_persist && trig_in) { // wait until last trigger in to clear screen otherwise
-		int next = 0;
-		while (!next) {
-			printf("1 to continue: ");
-			scanf("%i",&next);
-		}		
-		printf("\n");
+		while (trig_in_value == '0') { // wait until trigger in is asserted
+			fp_trig_in = fopen("/sys/class/gpio/gpio"GPIO_IN"/value","r");
+			trig_in_value = fgetc(fp_trig_in);
+			fclose(fp_trig_in);
+			usleep(1000);
+		}
 		clear_screen(fbp, bbp, var_info, fix_info, screensize);
 	}
 
 	return EXIT_SUCCESS;
 }
 
-int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize, int trig_in) {
-	int i, ii;
-	long x, y, location;
-	long x_max = var_info->xres_virtual;
-	long y_max = var_info->yres_virtual;
-	uint32_t pix = 0x123456;// Pixel to draw
-	struct timeval start, stop;
-	int usecs = 0;
-	double totalusecs = 0, total_displayed = 0; 
-
-
-	// Will loop through displaying all images
-	for (ii = 0; ii < repeat; ii++) {
-		for (i = 0; i < 6; i++) {
-		// Transfer image structure to the buffer
-		for (y=0; y<y_max; y++) {
-			for (x=0; x<x_max; x++) {
-				location = (x+var_info->xoffset) * (var_info->bits_per_pixel / 8) + (y + var_info->yoffset) * fix_info->line_length; // offset where we write pixel value
-				if (i == 0) {
-					pix = pixel_color(0xff, 0xff, 0xff, var_info);
-				}
-				else if (i == 1) {
-					pix = pixel_color(0xff, 0x00, 0x00, var_info);
-				}
-				else if (i == 2) {
-					pix = pixel_color(0x00, 0xff, 0x00, var_info);
-				}
-				else if (i == 3) {
-					pix = pixel_color(0x00, 0x00, 0xff, var_info);
-				}
-				else if (i == 4) {
-					pix = pixel_color(0x20, 0x20, 0x20, var_info);
-				}
-				else {
-					pix = pixel_color(0x00, 0x00, 0x00, var_info);
-				}
-				
-
-				*((uint32_t*)(bbp + location)) = pix; // write pixel to buffer	
-			}
-		}
-		
-		// Wait until delay is over
-		if (!(ii == 0 && i == 0) && !trig_in) { // as long as it's not the first time through the loop we have to wait
-			do {
-				usleep(10);
-				gettimeofday(&stop, NULL);
-				usecs = (stop.tv_usec - start.tv_usec) + (stop.tv_sec - start.tv_sec)*1000000;
-
-			
-			} while (usecs < (delay-EXTRA_TIME)); // -EXTRA_TIME which is approximate buffer load time 
-			
-			if (DEBUG_TIME) {
-				printf("Delay goal is %ius versus actual of %ius. Difference: %.1fms\n",delay,usecs,(usecs-delay)/1000.0);
-				totalusecs+=usecs;
-				total_displayed++;
-			}
-		}
-		else if (trig_in) { // if we are using trigger in
-			
-			int next = 0;
-			while (!next) {
-				printf("1 to continue: ");
-				scanf("%i",&next);
-			}		
-			printf("\n");
-		}
-
-		// Freeze update buffer
-		system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x01 i");
-
-		// Display image
-		memcpy(fbp, bbp, screensize); // load framebuffer from buffered location
-		
-		// Start timer that will be used for next image
-		gettimeofday(&start, NULL);
-		
-		usleep(delay/3); // allow buffer to finish loading
-		system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer
-
-		
-		}
-	}
-
-	// Wait for last image to be done
-	do {
-		usleep(10);
-		gettimeofday(&stop, NULL);
-		usecs = (stop.tv_usec - start.tv_usec) + (stop.tv_sec - start.tv_sec)*1000000;
-	} while (usecs < (delay-EXTRA_TIME)); // -EXTRA_TIME which is approximate buffer load time 
-	
-	if (DEBUG_TIME) {
-		printf("Delay goal is %ius versus actual of %ius. Difference: %.1fms\n",delay,usecs,(usecs-delay)/1000.0);
-		totalusecs+=usecs;
-		total_displayed++;
-		printf("Average difference: %.1fms\n\n", (totalusecs/total_displayed - delay)/1000.0);
-	}
-
-
-	return EXIT_SUCCESS;
-}
-
-
-
-int clear_screen(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, long screensize) {
-	long x, y, location;
-	long x_max = var_info->xres_virtual;
-	long y_max = var_info->yres_virtual;
-	uint32_t pix = 0x123456;// Pixel to draw
-
-	// Transfer image structure to the buffer
-	pix = pixel_color(0x00, 0x00, 0x00, var_info);
-	for (y=0; y<y_max; y++) {
-		for (x=0; x<x_max; x++) {
-			location = (x+var_info->xoffset) * (var_info->bits_per_pixel / 8) + (y + var_info->yoffset) * fix_info->line_length; // offset where we write pixel value
-			*((uint32_t*)(bbp + location)) = pix; // write pixel to buffer	
-		}
-	}
-
-	// Display image
-	memcpy(fbp, bbp, screensize); // load framebuffer from buffered location
-
-	return EXIT_SUCCESS;
-}
-
-
-
-// Releases appropriate files
-int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int kill_x, int video_mode) {
-	
-	if (munmap(fbp, screensize) == EXIT_FAILURE) {
-		printf("Unable to unmap fbp\n");
-	}
-	if (munmap(buffer, screensize) == EXIT_FAILURE) {
-		printf("Unable to unmap buffer\n");
-	}
-	if (close(fb) == EXIT_FAILURE) {
-		printf("Unable to close frame buffer\n");
-	}
-	if (kill_x == 1) { // should restart x server
-		system("sudo service lightdm start");
-	}
-	if (!video_mode) { // reset to video mode
-		system("i2cset -y 2 0x1b 0x7e 0x00 0x00 0x00 0x00 i"); // enable temporal dithering
-		system("i2cset -y 2 0x1b 0x50 0x00 0x00 0x00 0x07 i"); // enable automatic gain control
-		system("i2cset -y 2 0x1b 0x5e 0x00 0x00 0x00 0x01 i"); // enable color coordinate adjustment (CCA) function
-	}
-	return EXIT_SUCCESS;
-}
-
-inline uint32_t pixel_color(uint8_t r, uint8_t g, uint8_t b, struct fb_var_screeninfo *var_info) {
-	return (r<<var_info->red.offset) | (g<<var_info->green.offset) | (b<<var_info->blue.offset);
-
-}
-/* This function prints some key, fixed parameters of the frame buffer. Usefule for debugging. */
-void print_fix_info(struct fb_fix_screeninfo fix_info) {
-	printf("-----Fixed framebuffer information:-----\n");
-	printf("ID: %s\n", fix_info.id);
-	printf("Framebuffer length mem: %i\n", fix_info.smem_len);
-	printf("Framebuffer type (see FB_TYPE_): %i\n",fix_info.type); // probably 0 on Beagle which is packed_pixels 
-	printf("Framebuffer visual (see FB_VISUAL_): %i\n",fix_info.visual); // probably 2 on Beagle which is truecolor
-	printf("Line length (bytes): %i\n",fix_info.line_length);
-	printf("Acceleration (see FB_ACCEL_*): %i\n",fix_info.accel); // probably 0 on Beagle which means none
-	printf("\n");
-
-	return;
-}
-
-
-void print_var_info(struct fb_var_screeninfo var_info) {
-	printf("-----Variable framebuffer information:-----\n");
-	printf("X Resolution: %i\n",var_info.xres); 
-	printf("Y Resolution: %i\n",var_info.yres); 
-	printf("X Resolution Virtual: %i\n",var_info.xres_virtual); 
-	printf("Y Resolution Virtual: %i\n",var_info.yres_virtual); 
-	printf("X Offset: %i\n",var_info.xoffset); 
-	printf("Y Offset: %i\n",var_info.yoffset); 
-	printf("Bits per pixel: %i\n",var_info.bits_per_pixel); 
-	printf("Grayscale: %i\n",var_info.grayscale); // 0 = color
-	printf("Red pixel\n");
-	printf("   Offset = %i\n",var_info.red.offset);
-	printf("   Length = %i\n",var_info.red.length);
-	printf("   MSB Right = %i\n",var_info.red.msb_right);
-	printf("Green pixel\n");
-	printf("   Offset = %i\n",var_info.green.offset);
-	printf("   Length = %i\n",var_info.green.length);
-	printf("   MSB Right = %i\n",var_info.green.msb_right);
-	printf("Blue pixel\n");
-	printf("   Offset = %i\n",var_info.blue.offset);
-	printf("   Length = %i\n",var_info.blue.length);
-	printf("   MSB Right = %i\n",var_info.blue.msb_right);
-	printf("Transparency pixel\n");
-	printf("   Offset = %i\n",var_info.transp.offset);
-	printf("   Length = %i\n",var_info.transp.length);
-	printf("   MSB Right = %i\n",var_info.transp.msb_right);
-	printf("Nonstandard format: %i\n",var_info.nonstd); // 0 = standard
-	printf("Pixel Clock: %ips\n",var_info.pixclock); // 0 = color
-	printf("\n");
-	return;
-}
