@@ -9,6 +9,6 @@ make # first time you run the program
 ```
 
 ### program structure
--- display_app: handles command line arguments and the main display loop that loads images and synchronizes triggers
--- display_core: core functionality such as setting up triggers, clearing the screen, running test patterns, etc.
--- open_bmp: code related to opening and reading the user provided bitmap images
+ - display_app: handles command line arguments and the main display loop that loads images and synchronizes triggers
+ - display_core: core functionality such as setting up triggers, clearing the screen, running test patterns, etc.
+ - open_bmp: code related to opening and reading the user provided bitmap images
