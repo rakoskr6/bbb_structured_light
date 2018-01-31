@@ -1,18 +1,18 @@
 #include "display_app.h"
 #include "open_bmp.h"
+#include "display_core.h"
 
 
 
 int main(int argc, char** argv) {
 	// Variable declarations
-	int delay = 1000000, repeat = 1, framerate=10;
-	int fb = open("/dev/fb0", O_RDWR);
 	struct fb_fix_screeninfo fix_info;
 	struct fb_var_screeninfo var_info;
-	char image_names[100][200]; // array of images. Will load from file system eventually
-	int num_images = 0;
-	int i = 1;
+	int fb, delay = 1000000, repeat = 1, framerate = 10, num_images = 0, i = 1;
 	int test_flag = 0, screen_persist = 0, kill_x = 0, trig_in = 0, video_mode = 0;
+	char image_names[100][200]; 
+	long screensize;
+	uint8_t *fbp, *buffer;
 	DIR *d;
 	struct dirent *dir;
 
@@ -29,10 +29,8 @@ int main(int argc, char** argv) {
 		return EXIT_FAILURE;
 	}
 	
-	// Setup EVM for output from Beagle
-	system("i2cset -y 2 0x1b 0x0b 0x00 0x00 0x00 0x00 i");
-	system("i2cset -y 2 0x1b 0x0c 0x00 0x00 0x00 0x1b i");
-
+	
+	// Handle flags set from command line arguments
 	while (i < argc && argv[i][0] == '-') { // while there are flags to handle
 		if ((strcmp("-t",argv[i]) == 0) || (strcmp("-test",argv[i]) == 0)) {
 			test_flag = 1;
@@ -67,70 +65,54 @@ int main(int argc, char** argv) {
 		repeat = (int)strtol(argv[i+1],NULL,10);
 	}
 
-
-	// Get screen infromation and ensure it is properly setup
-	ioctl(fb, FBIOGET_FSCREENINFO, &fix_info); //Get the fixed screen information
-	ioctl(fb, FBIOGET_VSCREENINFO, &var_info); // Get the variable screen information
-
-
-	// Ensure certain parameters are properly setup (they already should be)
-	var_info.grayscale = 0;
-	var_info.bits_per_pixel = 32;
-
-	if (DEBUG) {
-		print_fix_info(fix_info);
-		print_var_info(var_info);
-	}
-
-
-	// Change some video settings for better "pixel accurate" mode
-	if (!video_mode) {
-		system("i2cset -y 2 0x1b 0x7e 0x00 0x00 0x00 0x02 i"); // disable temporal dithering
-		system("i2cset -y 2 0x1b 0x50 0x00 0x00 0x00 0x06 i"); // disable automatic gain control
-		system("i2cset -y 2 0x1b 0x5e 0x00 0x00 0x00 0x00 i"); // disable color coordinate adjustment (CCA) function
-	}
-
-	// Setup mmaped buffers
-	long screensize = var_info.yres_virtual * fix_info.line_length; // Determine total size of screen in bytes
-	uint8_t* fbp = mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fb, (off_t)0); // Map screenbuffer to memory with read and write access and visible to other processes
-	uint8_t* buffer = mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, (off_t)0); // Second buffer 
-
-	if (fbp == MAP_FAILED || buffer == MAP_FAILED) {
-		printf("mmap failed\n");
+	
+	// Setup framebuffer and GPIO pins
+	if (setup_fb(&fix_info, &var_info, &fb, &screensize, &fbp, &buffer, video_mode) == EXIT_FAILURE) {
+		printf("Unable to setup framebuffer\n");
 		return EXIT_FAILURE;
-	} 
+	}
+	if (setup_GPIO() == EXIT_FAILURE) {
+		printf("Unable to setup GPIO pins as triggers\n");
+		return EXIT_FAILURE;
+	}
 
-	setupGPIO(); // setup input and output triggers
 
 	// Display images
 	if(test_flag) {
 		test_loop(fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, trig_in);
 	}
 	else {
+		// Load files from current directory
 		d = opendir(".");
-		if (d) {
-			dir = readdir(d);
-			if (DEBUG) {
-				printf("Images to display:\n");
-			}
-			while (dir != NULL) {
-				if (strstr(dir->d_name,".bmp") != NULL) {
-					if (DEBUG) {
-						printf(" %s\n", dir->d_name);
-					}
-					strcpy(image_names[num_images], dir->d_name);
-					num_images++;
-				}
-				dir = readdir(d);
-			}
-			closedir(d);
+		if (!d) {
+			printf("Unable to open current directory\n");
+			return EXIT_FAILURE;
 		}
 
+		dir = readdir(d);
+		if (DEBUG) {
+			printf("Images to display:\n");
+		}
+
+		while (dir != NULL && num_images < 100) { // while there are still bitmaps to load (and there aren't more than 100)
+			if ((strstr(dir->d_name,".bmp") != NULL) && (strlen(dir->d_name) < 200)) { // if it looks like a .bmp and length isn't too long
+				if (DEBUG) {
+					printf(" %s\n", dir->d_name);
+				}
+				strcpy(image_names[num_images], dir->d_name);
+				num_images++;
+			}
+			dir = readdir(d);
+		}
+		closedir(d);
+		
+
+		// Display recently loaded images
 		display_images(image_names, num_images, fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, screen_persist, trig_in);
 	}
 	
 
-
+	// Cleanup open files
 	if (cleanup(fb, fbp, buffer, screensize, kill_x, video_mode) == EXIT_FAILURE){
 		printf("Error cleaning up files\n");
 		return EXIT_FAILURE;
@@ -153,6 +135,11 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	FILE *fp_trig_in; 
 	char trig_in_value = '0';
 	
+	if (num_images <= 0) {
+		printf("No images to display\n");
+		return EXIT_FAILURE;
+	}
+
 	if (trig_in) { // if there is a trigger in delay should coorspond to a relativly high framerate (~50fps works)
 		delay = 20000;
 	}

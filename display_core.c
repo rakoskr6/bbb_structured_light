@@ -1,5 +1,141 @@
 #include "display_app.h"
 #include "open_bmp.h"
+#include "display_core.h"
+
+int setup_fb(struct fb_fix_screeninfo *fix_info, struct fb_var_screeninfo *var_info, int *fb, long *screensize, uint8_t **fbp, uint8_t **buffer, int video_mode) {
+	// Setup fb0
+	*fb =  open("/dev/fb0", O_RDWR); // set framebuffer
+	if (*fb < 0) {
+		printf("Unable to open frame buffer 0\n");
+		return EXIT_FAILURE;
+	}
+
+	// Setup EVM for output from Beagle
+	system("i2cset -y 2 0x1b 0x0b 0x00 0x00 0x00 0x00 i");
+	system("i2cset -y 2 0x1b 0x0c 0x00 0x00 0x00 0x1b i");
+
+	// Get screen infromation and ensure it is properly setup
+	ioctl(*fb, FBIOGET_FSCREENINFO, fix_info); //Get the fixed screen information
+	ioctl(*fb, FBIOGET_VSCREENINFO, var_info); // Get the variable screen information
+
+	// Ensure certain parameters are properly setup (they already should be)
+	var_info->grayscale = 0;
+	var_info->bits_per_pixel = 32;
+
+	// Change some video settings for better "pixel accurate" mode
+	if (!video_mode) {
+		system("i2cset -y 2 0x1b 0x7e 0x00 0x00 0x00 0x02 i"); // disable temporal dithering
+		system("i2cset -y 2 0x1b 0x50 0x00 0x00 0x00 0x06 i"); // disable automatic gain control
+		system("i2cset -y 2 0x1b 0x5e 0x00 0x00 0x00 0x00 i"); // disable color coordinate adjustment (CCA) function
+	}
+
+	// Setup mmaped buffers
+	*screensize = var_info->yres_virtual * fix_info->line_length; // Determine total size of screen in bytes
+	*fbp = mmap(0, *screensize, PROT_READ | PROT_WRITE, MAP_SHARED, *fb, (off_t)0); // Map screenbuffer to memory with read and write access and visible to other processes
+	*buffer = mmap(0, *screensize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, (off_t)0); // Second buffer 
+
+	if (*fbp == MAP_FAILED || *buffer == MAP_FAILED) {
+		printf("mmap failed\n");
+		return EXIT_FAILURE;
+	} 
+
+
+	if (DEBUG) {
+		print_fix_info(*fix_info);
+		print_var_info(*var_info);
+	}
+
+	return EXIT_SUCCESS;
+
+
+
+}
+
+
+int setup_GPIO() {
+	DIR *dir_out, *dir_in;
+	dir_out = opendir("/sys/class/gpio/gpio"GPIO_OUT);
+	dir_in = opendir("/sys/class/gpio/gpio"GPIO_IN);
+
+	if (!dir_out) { // if pin isn't setup as GPIO need to do that
+		if (DEBUG) {
+			printf("Setting up GPIO"GPIO_OUT" as output\n");
+		}
+		system("echo "GPIO_OUT" > /sys/class/gpio/export"); // setup pin as gpio
+		usleep(200000); // wait for pin to finish setting up
+		
+	} 
+
+	if (!dir_in) { // if pin isn't setup as GPIO need to do that
+		if (DEBUG) {
+			printf("Setting up GPIO"GPIO_IN" as input\n");
+		}
+		system("echo "GPIO_IN" > /sys/class/gpio/export"); // setup pin as gpio
+		usleep(200000); // wait for pin to finish setting up
+	} 
+
+	system("echo out > /sys/class/gpio/gpio"GPIO_OUT"/direction"); // setup pin GPIO_OUT as output
+	system("echo in > /sys/class/gpio/gpio"GPIO_IN"/direction"); // setup pin GPIO_IN as input
+	
+
+	return EXIT_SUCCESS;
+}
+
+
+int clear_screen(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, long screensize) {
+	long x, y, location;
+	long x_max = var_info->xres_virtual;
+	long y_max = var_info->yres_virtual;
+	uint32_t pix = 0x123456;// Pixel to draw
+
+	// Transfer image structure to the buffer
+	pix = pixel_color(0x00, 0x00, 0x00, var_info);
+	for (y=0; y<y_max; y++) {
+		for (x=0; x<x_max; x++) {
+			location = (x+var_info->xoffset) * (var_info->bits_per_pixel / 8) + (y + var_info->yoffset) * fix_info->line_length; // offset where we write pixel value
+			*((uint32_t*)(bbp + location)) = pix; // write pixel to buffer	
+		}
+	}
+
+	// Display image
+	memcpy(fbp, bbp, screensize); // load framebuffer from buffered location
+
+	return EXIT_SUCCESS;
+}
+
+
+
+
+	
+
+
+// Releases appropriate files
+int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int kill_x, int video_mode) {
+	
+	if (munmap(fbp, screensize) == EXIT_FAILURE) {
+		printf("Unable to unmap fbp\n");
+	}
+	if (munmap(buffer, screensize) == EXIT_FAILURE) {
+		printf("Unable to unmap buffer\n");
+	}
+	if (close(fb) == EXIT_FAILURE) {
+		printf("Unable to close frame buffer\n");
+	}
+	if (kill_x == 1) { // should restart x server
+		system("sudo service lightdm start");
+	}
+	if (!video_mode) { // reset to video mode
+		system("i2cset -y 2 0x1b 0x7e 0x00 0x00 0x00 0x00 i"); // enable temporal dithering
+		system("i2cset -y 2 0x1b 0x50 0x00 0x00 0x00 0x07 i"); // enable automatic gain control
+		system("i2cset -y 2 0x1b 0x5e 0x00 0x00 0x00 0x01 i"); // enable color coordinate adjustment (CCA) function
+	}
+	return EXIT_SUCCESS;
+}
+
+inline uint32_t pixel_color(uint8_t r, uint8_t g, uint8_t b, struct fb_var_screeninfo *var_info) {
+	return (r<<var_info->red.offset) | (g<<var_info->green.offset) | (b<<var_info->blue.offset);
+
+}
 
 int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize, int trig_in) {
 	int i, ii;
@@ -114,88 +250,6 @@ int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, st
 }
 
 
-
-int clear_screen(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, long screensize) {
-	long x, y, location;
-	long x_max = var_info->xres_virtual;
-	long y_max = var_info->yres_virtual;
-	uint32_t pix = 0x123456;// Pixel to draw
-
-	// Transfer image structure to the buffer
-	pix = pixel_color(0x00, 0x00, 0x00, var_info);
-	for (y=0; y<y_max; y++) {
-		for (x=0; x<x_max; x++) {
-			location = (x+var_info->xoffset) * (var_info->bits_per_pixel / 8) + (y + var_info->yoffset) * fix_info->line_length; // offset where we write pixel value
-			*((uint32_t*)(bbp + location)) = pix; // write pixel to buffer	
-		}
-	}
-
-	// Display image
-	memcpy(fbp, bbp, screensize); // load framebuffer from buffered location
-
-	return EXIT_SUCCESS;
-}
-
-
-
-int setupGPIO() {
-	DIR *dir_out, *dir_in;
-	dir_out = opendir("/sys/class/gpio/gpio"GPIO_OUT);
-	dir_in = opendir("/sys/class/gpio/gpio"GPIO_IN);
-
-	if (!dir_out) { // if pin isn't setup as GPIO need to do that
-		if (DEBUG) {
-			printf("Setting up GPIO"GPIO_OUT" as output\n");
-		}
-		system("echo "GPIO_OUT" > /sys/class/gpio/export"); // setup pin as gpio
-		usleep(200000); // wait for pin to finish setting up
-		
-	} 
-
-	if (!dir_in) { // if pin isn't setup as GPIO need to do that
-		if (DEBUG) {
-			printf("Setting up GPIO"GPIO_IN" as input\n");
-		}
-		system("echo "GPIO_IN" > /sys/class/gpio/export"); // setup pin as gpio
-		usleep(200000); // wait for pin to finish setting up
-	} 
-
-	system("echo out > /sys/class/gpio/gpio"GPIO_OUT"/direction"); // setup pin GPIO_OUT as output
-	system("echo in > /sys/class/gpio/gpio"GPIO_IN"/direction"); // setup pin GPIO_IN as input
-	
-
-	return EXIT_SUCCESS;
-}
-	
-
-
-// Releases appropriate files
-int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int kill_x, int video_mode) {
-	
-	if (munmap(fbp, screensize) == EXIT_FAILURE) {
-		printf("Unable to unmap fbp\n");
-	}
-	if (munmap(buffer, screensize) == EXIT_FAILURE) {
-		printf("Unable to unmap buffer\n");
-	}
-	if (close(fb) == EXIT_FAILURE) {
-		printf("Unable to close frame buffer\n");
-	}
-	if (kill_x == 1) { // should restart x server
-		system("sudo service lightdm start");
-	}
-	if (!video_mode) { // reset to video mode
-		system("i2cset -y 2 0x1b 0x7e 0x00 0x00 0x00 0x00 i"); // enable temporal dithering
-		system("i2cset -y 2 0x1b 0x50 0x00 0x00 0x00 0x07 i"); // enable automatic gain control
-		system("i2cset -y 2 0x1b 0x5e 0x00 0x00 0x00 0x01 i"); // enable color coordinate adjustment (CCA) function
-	}
-	return EXIT_SUCCESS;
-}
-
-inline uint32_t pixel_color(uint8_t r, uint8_t g, uint8_t b, struct fb_var_screeninfo *var_info) {
-	return (r<<var_info->red.offset) | (g<<var_info->green.offset) | (b<<var_info->blue.offset);
-
-}
 /* This function prints some key, fixed parameters of the frame buffer. Usefule for debugging. */
 void print_fix_info(struct fb_fix_screeninfo fix_info) {
 	printf("-----Fixed framebuffer information:-----\n");
