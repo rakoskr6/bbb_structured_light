@@ -213,7 +213,7 @@ int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, st
 			trig_in_value = '0';
 		}
 
-		// Freeze update buffer
+		// Freeze update buffer of DLP2000
 		system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x01 i");
 
 		// Display image
@@ -223,7 +223,8 @@ int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, st
 		gettimeofday(&start, NULL);
 		
 		usleep(delay/3); // allow buffer to finish loading
-		system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer
+		system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer of DLP2000
+		usleep(delay/10); // allow DLP2000 to update
 		system("echo 1 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger high to indicate image done loading
 		
 		}

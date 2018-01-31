@@ -12,3 +12,9 @@ make # first time you run the program
  - display_app: handles command line arguments and the main display loop that loads images and synchronizes triggers
  - display_core: core functionality such as setting up triggers, clearing the screen, running test patterns, etc.
  - open_bmp: code related to opening and reading the user provided bitmap images
+
+### to do
+ - figure out if trigger out is no longer too early
+ - add binary pattern mode
+ - figure out how to properly include duplicate headers (if needed)
+ - Cleanup comments and code

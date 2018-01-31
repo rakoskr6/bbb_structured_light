@@ -1,7 +1,5 @@
 #include "display_app.h"
 #include "open_bmp.h"
-#include "display_core.h"
-
 
 
 int main(int argc, char** argv) {
@@ -123,18 +121,20 @@ int main(int argc, char** argv) {
 
 
 int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize, int screen_persist, int trig_in) {
-	int i, ii;
+	// Variable declarations
+	int i, ii, usecs = 0;
 	long x, y, location;
 	long x_max = var_info->xres_virtual;
 	long y_max = var_info->yres_virtual;
 	uint32_t pix = 0x123456;// Pixel to draw
 	pixel** img;
 	struct timeval start, stop, start2, stop2;
-	int usecs = 0;
 	double totalusecs = 0;
 	FILE *fp_trig_in; 
 	char trig_in_value = '0';
 	
+
+	// Initial checks
 	if (num_images <= 0) {
 		printf("No images to display\n");
 		return EXIT_FAILURE;
@@ -143,6 +143,9 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	if (trig_in) { // if there is a trigger in delay should coorspond to a relativly high framerate (~50fps works)
 		delay = 20000;
 	}
+
+	system("echo 0 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // ensure initial trigger output is low
+
 
 	// Allocate image structure which will be used to load images
 	img = (pixel**)malloc(IMG_Y * sizeof(pixel*));
@@ -154,7 +157,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	// Will loop through displaying all images
 	for (ii = 0; ii < repeat; ii++) {
 		for (i = 0; i < num_images; i++) {
-			// Open image and ensure it's successful. Inefficent to load file everytime but fine at low framerates
+			// Open image and ensure it's successful. Inefficent to load file everytime but fine at BeagleBone's low framerates
 			if (open_png(image_names[i], img) == EXIT_FAILURE) {
 				return EXIT_FAILURE;
 			}
@@ -170,6 +173,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 				}
 			}
 			
+
 			// Wait until delay is over
 			if (!(ii == 0 && i == 0) && !trig_in) { // as long as it's not the first time through the loop we have to wait
 				do {
@@ -196,7 +200,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 			}
 			
 
-			// Freeze update buffer
+			// Freeze update buffer of DLP2000
 			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x01 i");
 
 			// Display image
@@ -206,7 +210,8 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 			gettimeofday(&start, NULL);
 
 			usleep(delay/3); // allow buffer to finish loading
-			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer
+			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer of DLP2000
+			usleep(delay/10); // allow DLP2000 to update
 			system("echo 1 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger high to indicate image done loading
 		}
 	}

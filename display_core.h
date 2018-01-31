@@ -1,8 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <fcntl.h> // for open syscall
-//#include <sys/types.h>
-//#include <sys/stat.h>
 #include <linux/fb.h> // frame buffer specific
 #include <stdint.h>
 #include <sys/mman.h> // for mmap
