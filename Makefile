@@ -1,6 +1,6 @@
 TARGET = pattern_disp
 CC=gcc
-CFLAGS=-O3
+CFLAGS=-g
 #DEPS = write_to_fb.h open_png.h
 #OBJ = write_to_fb.o open_png.o
 

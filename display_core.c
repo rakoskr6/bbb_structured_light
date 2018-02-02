@@ -77,6 +77,8 @@ int setup_GPIO() {
 	system("echo out > /sys/class/gpio/gpio"GPIO_OUT"/direction"); // setup pin GPIO_OUT as output
 	system("echo in > /sys/class/gpio/gpio"GPIO_IN"/direction"); // setup pin GPIO_IN as input
 	
+	closedir(dir_out);
+	closedir(dir_in);
 
 	return EXIT_SUCCESS;
 }
@@ -110,7 +112,7 @@ int clear_screen(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info,
 
 
 // Releases appropriate files
-int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int kill_x, int video_mode) {
+int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int restart_x, int video_mode) {
 	
 	if (munmap(fbp, screensize) == EXIT_FAILURE) {
 		printf("Unable to unmap fbp\n");
@@ -121,7 +123,7 @@ int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int kill_x, 
 	if (close(fb) == EXIT_FAILURE) {
 		printf("Unable to close frame buffer\n");
 	}
-	if (kill_x == 1) { // should restart x server
+	if (restart_x == 1) { // should restart x server
 		system("sudo service lightdm start");
 	}
 	if (!video_mode) { // reset to video mode
@@ -156,77 +158,77 @@ int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, st
 	// Will loop through displaying all images
 	for (ii = 0; ii < repeat; ii++) {
 		for (i = 0; i < 6; i++) {
-		// Transfer image structure to the buffer
-		for (y=0; y<y_max; y++) {
-			for (x=0; x<x_max; x++) {
-				location = (x+var_info->xoffset) * (var_info->bits_per_pixel / 8) + (y + var_info->yoffset) * fix_info->line_length; // offset where we write pixel value
-				if (i == 0) {
-					pix = pixel_color(0xff, 0xff, 0xff, var_info);
+			// Transfer image structure to the buffer
+			for (y=0; y<y_max; y++) {
+				for (x=0; x<x_max; x++) {
+					location = (x+var_info->xoffset) * (var_info->bits_per_pixel / 8) + (y + var_info->yoffset) * fix_info->line_length; // offset where we write pixel value
+					if (i == 0) {
+						pix = pixel_color(0xff, 0xff, 0xff, var_info);
+					}
+					else if (i == 1) {
+						pix = pixel_color(0xff, 0x00, 0x00, var_info);
+					}
+					else if (i == 2) {
+						pix = pixel_color(0x00, 0xff, 0x00, var_info);
+					}
+					else if (i == 3) {
+						pix = pixel_color(0x00, 0x00, 0xff, var_info);
+					}
+					else if (i == 4) {
+						pix = pixel_color(0x20, 0x20, 0x20, var_info);
+					}
+					else {
+						pix = pixel_color(0x00, 0x00, 0x00, var_info);
+					}
+					
+
+					*((uint32_t*)(bbp + location)) = pix; // write pixel to buffer	
 				}
-				else if (i == 1) {
-					pix = pixel_color(0xff, 0x00, 0x00, var_info);
-				}
-				else if (i == 2) {
-					pix = pixel_color(0x00, 0xff, 0x00, var_info);
-				}
-				else if (i == 3) {
-					pix = pixel_color(0x00, 0x00, 0xff, var_info);
-				}
-				else if (i == 4) {
-					pix = pixel_color(0x20, 0x20, 0x20, var_info);
-				}
-				else {
-					pix = pixel_color(0x00, 0x00, 0x00, var_info);
-				}
+			}
+			system("echo 0 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger outpu low since we have completed the trigger
+
+			
+			// Wait until delay is over
+			if (!(ii == 0 && i == 0) && !trig_in) { // as long as it's not the first time through the loop we have to wait
+				do {
+					usleep(10);
+					gettimeofday(&stop, NULL);
+					usecs = (stop.tv_usec - start.tv_usec) + (stop.tv_sec - start.tv_sec)*1000000;
+
 				
-
-				*((uint32_t*)(bbp + location)) = pix; // write pixel to buffer	
+				} while (usecs < (delay-EXTRA_TIME)); // -EXTRA_TIME which is approximate buffer load time 
+				
+				if (DEBUG_TIME) {
+					printf("Delay goal is %ius versus actual of %ius. Difference: %.1fms\n",delay,usecs,(usecs-delay)/1000.0);
+					totalusecs+=usecs;
+					total_displayed++;
+				}
 			}
-		}
-		system("echo 0 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger outpu low since we have completed the trigger
-
-		
-		// Wait until delay is over
-		if (!(ii == 0 && i == 0) && !trig_in) { // as long as it's not the first time through the loop we have to wait
-			do {
-				usleep(10);
-				gettimeofday(&stop, NULL);
-				usecs = (stop.tv_usec - start.tv_usec) + (stop.tv_sec - start.tv_sec)*1000000;
-
-			
-			} while (usecs < (delay-EXTRA_TIME)); // -EXTRA_TIME which is approximate buffer load time 
-			
-			if (DEBUG_TIME) {
-				printf("Delay goal is %ius versus actual of %ius. Difference: %.1fms\n",delay,usecs,(usecs-delay)/1000.0);
-				totalusecs+=usecs;
-				total_displayed++;
+			else if (trig_in) { // if we are using trigger in
+				
+				while (trig_in_value == '0') { // wait until trigger in is asserted
+					fp_trig_in = fopen("/sys/class/gpio/gpio"GPIO_IN"/value","r");
+					trig_in_value = fgetc(fp_trig_in);
+					fclose(fp_trig_in);
+					usleep(1000);
+				}
+				trig_in_value = '0';
 			}
-		}
-		else if (trig_in) { // if we are using trigger in
+
+			// Freeze update buffer of DLP2000
+			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x01 i");
+
+			// Display image
+			memcpy(fbp, bbp, screensize); // load framebuffer from buffered location
 			
-			while (trig_in_value == '0') { // wait until trigger in is asserted
-				fp_trig_in = fopen("/sys/class/gpio/gpio"GPIO_IN"/value","r");
-				trig_in_value = fgetc(fp_trig_in);
-				fclose(fp_trig_in);
-				usleep(1000);
-			}
-			trig_in_value = '0';
-		}
-
-		// Freeze update buffer of DLP2000
-		system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x01 i");
-
-		// Display image
-		memcpy(fbp, bbp, screensize); // load framebuffer from buffered location
-		
-		// Start timer that will be used for next image
-		gettimeofday(&start, NULL);
-		
-		usleep(delay/3); // allow buffer to finish loading
-		system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer of DLP2000
-		usleep(delay/10); // allow DLP2000 to update
-		system("echo 1 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger high to indicate image done loading
-		
+			// Start timer that will be used for next image
+			gettimeofday(&start, NULL);
+			
+			usleep(delay/3); // allow buffer to finish loading
+			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer of DLP2000
+			usleep(delay/10); // allow DLP2000 to update
+			system("echo 1 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger high to indicate image done loading
+			
 		}
 	}
 
@@ -249,6 +251,7 @@ int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, st
 
 	return EXIT_SUCCESS;
 }
+
 
 
 /* This function prints some key, fixed parameters of the frame buffer. Usefule for debugging. */

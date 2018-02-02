@@ -3,16 +3,15 @@
 
 
 int main(int argc, char** argv) {
-	// Variable declarations
+	// Variable declarationss
 	struct fb_fix_screeninfo fix_info;
 	struct fb_var_screeninfo var_info;
 	int fb, delay = 1000000, repeat = 1, framerate = 10, num_images = 0, i = 1;
-	int test_flag = 0, screen_persist = 0, kill_x = 0, trig_in = 0, video_mode = 0;
+	int test_flag = 0, screen_persist = 0, kill_x = 0, trig_in = 0, video_mode = 0, restart_x = 0;
 	char image_names[100][200]; 
 	long screensize;
 	uint8_t *fbp, *buffer;
-	DIR *d;
-	struct dirent *dir;
+	
 
 
 	// Handle command line arguments
@@ -22,8 +21,9 @@ int main(int argc, char** argv) {
 		printf(" -test (-t)     run through built in test patterns\n");
 		printf(" -in (-i)       use the trigger in (GPIO"GPIO_IN") to advance to next pattern instead of set framerate\n");
 		printf(" -persist (-p)  the last pattern will stay on the screen at the end of the sequence\n");
-		printf(" -kill (-k)     stop running the X-server (sometimes gets better results). Restarts afterwards\n");
+		printf(" -kill (-k)     stop running the X-server (sometimes gets better results and hides extra graphics)\n");
 		printf(" -video (-v)    don't modify the EVM display and keep the display in video mode\n");
+		printf(" -restart (-r)  stopp running the X-server and restart the X-server when done\n");
 		return EXIT_FAILURE;
 	}
 	
@@ -45,6 +45,14 @@ int main(int argc, char** argv) {
 			usleep(1000000); // let X server close
 		}
 
+		if ((strcmp("-r",argv[i]) == 0) || (strcmp("-restart",argv[i]) == 0)) {
+			kill_x = 1;
+			restart_x = 1;
+			printf("Closing X server...\n");
+			system("sudo service lightdm stop");
+			usleep(1000000); // let X server close
+		}
+
 		if ((strcmp("-i",argv[i]) == 0) || (strcmp("-in",argv[i]) == 0)) {
 			trig_in = 1;
 		}
@@ -52,14 +60,14 @@ int main(int argc, char** argv) {
 		if ((strcmp("-v",argv[i]) == 0) || (strcmp("-video",argv[i]) == 0)) {
 			video_mode = 1;
 		}
-		i++; // increment to check additional flags
+		i++;
 	}
 
-	if (argc >= (i+1)) {
+	if (argc >= (i+1)) { // get framerate if it is entered
 		framerate = (int)strtol(argv[i],NULL,10);
 		delay = 1000000/framerate;
 	}
-	if (argc >= (i+2)) {
+	if (argc >= (i+2)) { // get number of times to repeat pattern if it's entered
 		repeat = (int)strtol(argv[i+1],NULL,10);
 	}
 
@@ -80,38 +88,17 @@ int main(int argc, char** argv) {
 		test_loop(fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, trig_in);
 	}
 	else {
-		// Load files from current directory
-		d = opendir(".");
-		if (!d) {
-			printf("Unable to open current directory\n");
+		if(load_image_files(&num_images, image_names) == EXIT_FAILURE) {
 			return EXIT_FAILURE;
 		}
 
-		dir = readdir(d);
-		if (DEBUG) {
-			printf("Images to display:\n");
-		}
-
-		while (dir != NULL && num_images < 100) { // while there are still bitmaps to load (and there aren't more than 100)
-			if ((strstr(dir->d_name,".bmp") != NULL) && (strlen(dir->d_name) < 200)) { // if it looks like a .bmp and length isn't too long
-				if (DEBUG) {
-					printf(" %s\n", dir->d_name);
-				}
-				strcpy(image_names[num_images], dir->d_name);
-				num_images++;
-			}
-			dir = readdir(d);
-		}
-		closedir(d);
-		
-
-		// Display recently loaded images
+		// Display loaded images
 		display_images(image_names, num_images, fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, screen_persist, trig_in);
 	}
 	
 
 	// Cleanup open files
-	if (cleanup(fb, fbp, buffer, screensize, kill_x, video_mode) == EXIT_FAILURE){
+	if (cleanup(fb, fbp, buffer, screensize, restart_x, video_mode) == EXIT_FAILURE){
 		printf("Error cleaning up files\n");
 		return EXIT_FAILURE;
 	}
@@ -140,7 +127,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 		return EXIT_FAILURE;
 	}
 
-	if (trig_in) { // if there is a trigger in delay should coorspond to a relativly high framerate (~50fps works)
+	if (trig_in) { // if there is a trigger in, delay should coorspond to a relativly high framerate (~50fps works)
 		delay = 20000;
 	}
 
@@ -200,7 +187,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 			}
 			
 
-			// Freeze update buffer of DLP2000
+			// Freeze update buffer of DLP2000. This is so it won't display garbage data as we update the Beagles framebuffer
 			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x01 i");
 
 			// Display image
@@ -209,7 +196,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 			// Start timer that will be used for next image
 			gettimeofday(&start, NULL);
 
-			usleep(delay/3); // allow buffer to finish loading
+			usleep(delay/3); // allow framebuffer to finish loading
 			system("i2cset -y 2 0x1b 0xa3 0x00 0x00 0x00 0x00 i"); // Unfreeze update buffer of DLP2000
 			usleep(delay/10); // allow DLP2000 to update
 			system("echo 1 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger high to indicate image done loading
