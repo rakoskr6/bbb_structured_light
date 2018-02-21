@@ -37,20 +37,20 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <fcntl.h> // for open syscall
-#include <linux/fb.h> // frame buffer specific
+#include <fcntl.h>
+#include <linux/fb.h> 
 #include <stdint.h>
-#include <sys/mman.h> // for mmap
-#include <unistd.h> // for usleep
-#include <string.h> // for memcpy
-#include <sys/time.h> // measuring time
-#include <sys/ioctl.h> // for ictl
+#include <sys/mman.h> 
+#include <unistd.h> 
+#include <string.h> 
+#include <sys/time.h> 
+#include <sys/ioctl.h>
 #include <linux/kd.h>
 #include <dirent.h>
 
 int setup_fb(struct fb_fix_screeninfo *fix_info, struct fb_var_screeninfo *var_info, int *fb, long *screensize, uint8_t **fbp, uint8_t **buffer, int video_mode);
 int setup_GPIO();
-int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int restart_x, int video_mode);
+int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int restart_x, int video_mode, char **image_names);
 int clear_screen(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, long screensize);
 void print_fix_info(struct fb_fix_screeninfo fix_info);
 void print_var_info(struct fb_var_screeninfo var_info);

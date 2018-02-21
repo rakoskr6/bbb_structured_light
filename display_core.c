@@ -144,7 +144,8 @@ int clear_screen(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info,
 
 
 // Releases appropriate files
-int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int restart_x, int video_mode) {
+int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int restart_x, int video_mode, char **image_names) {
+	int i = 0;
 	
 	if (munmap(fbp, screensize) == EXIT_FAILURE) {
 		printf("Unable to unmap fbp\n");
@@ -162,6 +163,12 @@ int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int restart_
 		system("i2cset -y 2 0x1b 0x7e 0x00 0x00 0x00 0x00 i"); // enable temporal dithering
 		system("i2cset -y 2 0x1b 0x50 0x00 0x00 0x00 0x07 i"); // enable automatic gain control
 		system("i2cset -y 2 0x1b 0x5e 0x00 0x00 0x00 0x01 i"); // enable color coordinate adjustment (CCA) function
+	}
+	if (image_names != NULL) {
+		for (i = 0; i < 100; i++) {
+			free(image_names[i]);
+		}
+		free(image_names);
 	}
 	return EXIT_SUCCESS;
 }

@@ -160,7 +160,8 @@ int verify_bmp(FILE* f, long* offset, char* file_name) {
 }
 
 
-int load_image_files(int *num_images, char image_names[100][200]) {
+
+int load_image_files(int *num_images, char **image_names) {
 	DIR *d;
 	struct dirent *dir;
 
@@ -172,22 +173,23 @@ int load_image_files(int *num_images, char image_names[100][200]) {
 	}
 
 	dir = readdir(d);
-	if (DEBUG==0) {
+	if (DEBUG) {
 		printf("Images to display:\n");
 	}
 
 	while (dir != NULL && *num_images < 100) { // while there are still bitmaps to load (and there aren't more than 100)
 		if ((strstr(dir->d_name,".bmp") != NULL) && (strlen(dir->d_name) < 200)) { // if it looks like a .bmp and length isn't too long
-			if (DEBUG==0) {
+			if (DEBUG) {
 				printf(" %s\n", dir->d_name);
 			}
-			strcpy(image_names[*num_images], dir->d_name);
+			strcpy(*(image_names+*num_images), dir->d_name);
 			*num_images = *num_images + 1;
 		}
 		dir = readdir(d);
 	}
 	closedir(d);
 
+	
 	return EXIT_SUCCESS;
 
 }

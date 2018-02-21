@@ -38,16 +38,23 @@
 #include "display_app.h"
 #include "open_bmp.h"
 
-
 int main(int argc, char** argv) {
 	// Variable declarationss
 	struct fb_fix_screeninfo fix_info;
 	struct fb_var_screeninfo var_info;
-	int fb, delay = 1000000, repeat = 1, framerate = 10, num_images = 0, i = 1;
+	int fb, delay = 1000000, repeat = 1, framerate = 10, num_images = 0, i = 0;
 	int test_flag = 0, screen_persist = 0, kill_x = 0, trig_in = 0, video_mode = 0, restart_x = 0;
-	char image_names[100][200]; 
+	//char image_names[100][200]; 
+	char ** image_names;
 	long screensize;
 	uint8_t *fbp, *buffer;
+
+	// Allocate image structure which will be used to store image names
+	image_names = (char**)malloc(100 * sizeof(char*));
+	for (i = 0; i < 100; i++) {
+		image_names[i] = (char*)malloc(200 * sizeof(char));
+	}
+	
 
 
 	// Handle command line arguments
@@ -64,6 +71,7 @@ int main(int argc, char** argv) {
 	}
 	
 	
+	i = 1;
 	// Handle flags set from command line arguments
 	while (i < argc && argv[i][0] == '-') { // while there are flags to handle
 		if ((strcmp("-t",argv[i]) == 0) || (strcmp("-test",argv[i]) == 0)) {
@@ -107,7 +115,7 @@ int main(int argc, char** argv) {
 		repeat = (int)strtol(argv[i+1],NULL,10);
 	}
 
-	
+
 	// Setup framebuffer and GPIO pins
 	if (setup_fb(&fix_info, &var_info, &fb, &screensize, &fbp, &buffer, video_mode) == EXIT_FAILURE) {
 		printf("Unable to setup framebuffer\n");
@@ -127,13 +135,14 @@ int main(int argc, char** argv) {
 		if(load_image_files(&num_images, image_names) == EXIT_FAILURE) {
 			return EXIT_FAILURE;
 		}
+		qsort(image_names, num_images, sizeof(image_names[0]), compar); // load files in alphabetical order
 
 		display_images(image_names, num_images, fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, screen_persist, trig_in); // Display loaded images
 	}
 	
 
 	// Cleanup open files
-	if (cleanup(fb, fbp, buffer, screensize, restart_x, video_mode) == EXIT_FAILURE){
+	if (cleanup(fb, fbp, buffer, screensize, restart_x, video_mode, image_names) == EXIT_FAILURE){
 		printf("Error cleaning up files\n");
 		return EXIT_FAILURE;
 	}
@@ -142,7 +151,7 @@ int main(int argc, char** argv) {
 }
 
 
-int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize, int screen_persist, int trig_in) {
+int display_images(char **image_names, int num_images, uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize, int screen_persist, int trig_in) {
 	// Variable declarations
 	int i, ii, usecs = 0;
 	long x, y, location;
@@ -180,7 +189,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	for (ii = 0; ii < repeat; ii++) {
 		for (i = 0; i < num_images; i++) {
 			// Open image and ensure it's successful. Inefficent to load file everytime but fine at BeagleBone's low effective video framerates
-			if (open_bmp(image_names[i], img) == EXIT_FAILURE) {
+			if (open_bmp(*(image_names+i), img) == EXIT_FAILURE) {
 				return EXIT_FAILURE;
 			}
 			system("echo 0 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger output low since we have completed the trigger
@@ -277,3 +286,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	return EXIT_SUCCESS;
 }
 
+int compar (const void * a, const void * b)
+{
+    return strcmp(*(char **) b, *(char **) a);
+}
