@@ -8,6 +8,6 @@ typedef struct pixel {
 
 } pixel;
 
-int open_png(char * file_name, pixel** img);
-int verify_png(FILE* f, long* offset, char* file_name);
+int open_bmp(char * file_name, pixel** img);
+int verify_bmp(FILE* f, long* offset, char* file_name);
 int load_image_files(int *num_images, char image_names[100][200]);

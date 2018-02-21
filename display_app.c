@@ -22,8 +22,8 @@ int main(int argc, char** argv) {
 		printf(" -in (-i)       use the trigger in (GPIO"GPIO_IN") to advance to next pattern instead of set framerate\n");
 		printf(" -persist (-p)  the last pattern will stay on the screen at the end of the sequence\n");
 		printf(" -kill (-k)     stop running the X-server (sometimes gets better results and hides extra graphics)\n");
-		printf(" -video (-v)    don't modify the EVM display and keep the display in video mode\n");
-		printf(" -restart (-r)  stopp running the X-server and restart the X-server when done\n");
+		printf(" -video (-v)    don't disable any of the video processing algoirthms on the EVM when running this code\n");
+		printf(" -restart (-r)  stop running the X-server and restart the X-server when done\n");
 		return EXIT_FAILURE;
 	}
 	
@@ -145,7 +145,7 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	for (ii = 0; ii < repeat; ii++) {
 		for (i = 0; i < num_images; i++) {
 			// Open image and ensure it's successful. Inefficent to load file everytime but fine at BeagleBone's low framerates
-			if (open_png(image_names[i], img) == EXIT_FAILURE) {
+			if (open_bmp(image_names[i], img) == EXIT_FAILURE) {
 				return EXIT_FAILURE;
 			}
 			system("echo 0 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger outpu low since we have completed the trigger

@@ -1,29 +1,16 @@
 TARGET = pattern_disp
 CC=gcc
-CFLAGS=-g
-#DEPS = write_to_fb.h open_png.h
-#OBJ = write_to_fb.o open_png.o
+CFLAGS=-O3
+DEPS = open_bmp.h display_core.h display_app.h
+OBJ = open_bmp.c display_core.c display_app.c
+
+%.o: %.c $(DEPS)
+	$(CC) -c -o $@ $< $(CFLAGS)
 
 
-.PHONY: default all clean
-
-default: $(TARGET)
-all: default
-
-OBJECTS = $(patsubst %.c, %.o, $(wildcard *.c))
-HEADERS = $(wildcard *.h)
-
-%.o: %.c $(HEADERS)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-.PRECIOUS: $(TARGET) $(OBJECTS)
-
-$(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -Wall $(LIBS) -o $@
+all: $(OBJ)
+	gcc -o $(TARGET) $^ $(CFLAGS)
 
 clean:
 	-rm -f *.o
 	-rm -f $(TARGET)
-
-
-

@@ -5,7 +5,7 @@
 
 
 
-int open_png(char * file_name, pixel** img) {
+int open_bmp(char * file_name, pixel** img) {
 	// Variable declarations
 	long offset = 0;
 	unsigned char buff[100];
@@ -14,7 +14,7 @@ int open_png(char * file_name, pixel** img) {
 	
 
 	// Verify that the file opened is in the correct format
-	if (verify_png(f, &offset, file_name) == EXIT_FAILURE) {
+	if (verify_bmp(f, &offset, file_name) == EXIT_FAILURE) {
 		printf("Unable to proceed\n");
 		return EXIT_FAILURE;
 	}
@@ -57,7 +57,7 @@ int open_png(char * file_name, pixel** img) {
 
 
 
-int verify_png(FILE* f, long* offset, char* file_name) {
+int verify_bmp(FILE* f, long* offset, char* file_name) {
 	// Variable declarations
 	unsigned char buff[100];
 
