@@ -41,7 +41,6 @@
 #define PRINTBMPDATA 0
 
 
-
 int open_bmp(char * file_name, pixel** img) {
 	// Variable declarations
 	long offset = 0;
@@ -68,7 +67,6 @@ int open_bmp(char * file_name, pixel** img) {
 		if (x >= IMG_X) { // finished reading row, go to next row
 			y++;
 			x = 0;
-			//fread(&buff, 2,1,f); // maybe needed for alignment
 		}
 	}
 
@@ -174,13 +172,13 @@ int load_image_files(int *num_images, char image_names[100][200]) {
 	}
 
 	dir = readdir(d);
-	if (DEBUG) {
+	if (DEBUG==0) {
 		printf("Images to display:\n");
 	}
 
 	while (dir != NULL && *num_images < 100) { // while there are still bitmaps to load (and there aren't more than 100)
 		if ((strstr(dir->d_name,".bmp") != NULL) && (strlen(dir->d_name) < 200)) { // if it looks like a .bmp and length isn't too long
-			if (DEBUG) {
+			if (DEBUG==0) {
 				printf(" %s\n", dir->d_name);
 			}
 			strcpy(image_names[*num_images], dir->d_name);

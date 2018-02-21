@@ -48,7 +48,6 @@ int main(int argc, char** argv) {
 	char image_names[100][200]; 
 	long screensize;
 	uint8_t *fbp, *buffer;
-	
 
 
 	// Handle command line arguments
@@ -122,15 +121,14 @@ int main(int argc, char** argv) {
 
 	// Display images
 	if(test_flag) {
-		test_loop(fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, trig_in);
+		test_loop(fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, trig_in); // display test "images"
 	}
 	else {
 		if(load_image_files(&num_images, image_names) == EXIT_FAILURE) {
 			return EXIT_FAILURE;
 		}
 
-		// Display loaded images
-		display_images(image_names, num_images, fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, screen_persist, trig_in);
+		display_images(image_names, num_images, fbp, buffer, &var_info, &fix_info, delay, repeat, screensize, screen_persist, trig_in); // Display loaded images
 	}
 	
 
@@ -181,11 +179,11 @@ int display_images(char image_names[100][200], int num_images, uint8_t* fbp, uin
 	// Will loop through displaying all images
 	for (ii = 0; ii < repeat; ii++) {
 		for (i = 0; i < num_images; i++) {
-			// Open image and ensure it's successful. Inefficent to load file everytime but fine at BeagleBone's low framerates
+			// Open image and ensure it's successful. Inefficent to load file everytime but fine at BeagleBone's low effective video framerates
 			if (open_bmp(image_names[i], img) == EXIT_FAILURE) {
 				return EXIT_FAILURE;
 			}
-			system("echo 0 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger outpu low since we have completed the trigger
+			system("echo 0 > /sys/class/gpio/gpio"GPIO_OUT"/value"); // set trigger output low since we have completed the trigger
 
 
 			// Transfer image structure to the buffer

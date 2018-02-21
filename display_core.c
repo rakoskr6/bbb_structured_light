@@ -143,11 +143,6 @@ int clear_screen(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info,
 }
 
 
-
-
-	
-
-
 // Releases appropriate files
 int cleanup(int fb, uint8_t *fbp, uint8_t *buffer, long screensize, int restart_x, int video_mode) {
 	
@@ -175,6 +170,7 @@ inline uint32_t pixel_color(uint8_t r, uint8_t g, uint8_t b, struct fb_var_scree
 	return (r<<var_info->red.offset) | (g<<var_info->green.offset) | (b<<var_info->blue.offset);
 
 }
+
 
 int test_loop(uint8_t* fbp, uint8_t* bbp, struct fb_var_screeninfo* var_info, struct fb_fix_screeninfo* fix_info, int delay, int repeat, long screensize, int trig_in) {
 	int i, ii;
